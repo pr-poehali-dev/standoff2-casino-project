@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "Регистрация пользователя",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "register",
+        "username": "testuser123",
+        "password": "testpass"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "username": "testuser123",
+        "balance": 0
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Получение списка PvP ставок",
+      "method": "GET",
+      "path": "/?action=pvp-list",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "bets": []
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

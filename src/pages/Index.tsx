@@ -5,34 +5,11 @@ import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import Icon from '@/components/ui/icon';
+import * as api from '@/lib/api';
 
 type Screen = 'welcome' | 'role-select' | 'auth' | 'player-menu' | 'admin-panel';
 type PlayerScreen = 'shop' | 'roulette' | 'pvp' | 'history';
 type RouletteResult = 'loss' | 'x1' | 'x2' | 'mystery';
-
-interface User {
-  username: string;
-  password: string;
-  balance: number;
-  transactions: Transaction[];
-}
-
-interface Transaction {
-  id: string;
-  type: 'win' | 'loss' | 'deposit' | 'withdrawal' | 'pvp_win' | 'pvp_loss';
-  amount: number;
-  timestamp: number;
-  description: string;
-}
-
-interface PvPBet {
-  id: string;
-  creator: string;
-  amount: number;
-  opponent?: string;
-  opponentAmount?: number;
-  winner?: string;
-}
 
 const Index = () => {
   const [screen, setScreen] = useState<Screen>('welcome');
@@ -42,70 +19,77 @@ const Index = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [currentUser, setCurrentUser] = useState<string>('');
+  const [currentUserId, setCurrentUserId] = useState<number>(0);
+  const [currentUsername, setCurrentUsername] = useState('');
+  const [balance, setBalance] = useState(0);
   
-  const [users, setUsers] = useState<User[]>([]);
+  const [transactions, setTransactions] = useState<api.ApiTransaction[]>([]);
   const [secretCode, setSecretCode] = useState('');
   const [betAmount, setBetAmount] = useState(10);
   const [isSpinning, setIsSpinning] = useState(false);
   const [rouletteResult, setRouletteResult] = useState<RouletteResult | null>(null);
   const [mysteryChoice, setMysteryChoice] = useState<number | null>(null);
   
-  const [pvpBets, setPvpBets] = useState<PvPBet[]>([]);
+  const [pvpBets, setPvpBets] = useState<api.ApiPvPBet[]>([]);
   const [newBetAmount, setNewBetAmount] = useState(10);
   const [respondBetAmount, setRespondBetAmount] = useState(10);
   
   const [adminCode, setAdminCode] = useState('');
+  const [adminUsers, setAdminUsers] = useState<api.ApiUser[]>([]);
   const [adminSearch, setAdminSearch] = useState('');
   const [adminCommand, setAdminCommand] = useState('');
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
 
   useEffect(() => {
-    const savedUsers = localStorage.getItem('casino_users');
-    if (savedUsers) {
-      setUsers(JSON.parse(savedUsers));
+    const savedUserId = localStorage.getItem('casino_user_id');
+    const savedUsername = localStorage.getItem('casino_username');
+    if (savedUserId && savedUsername) {
+      setCurrentUserId(parseInt(savedUserId));
+      setCurrentUsername(savedUsername);
+      loadUserData(parseInt(savedUserId));
     }
   }, []);
 
   useEffect(() => {
-    if (users.length > 0) {
-      localStorage.setItem('casino_users', JSON.stringify(users));
+    if (playerScreen === 'pvp' && screen === 'player-menu') {
+      loadPvPBets();
     }
-  }, [users]);
+  }, [playerScreen, screen]);
 
-  const getCurrentBalance = () => {
-    const user = users.find(u => u.username === currentUser);
-    return user?.balance || 0;
+  useEffect(() => {
+    if (playerScreen === 'history' && currentUserId) {
+      loadTransactions();
+    }
+  }, [playerScreen, currentUserId]);
+
+  const loadUserData = async (userId: number) => {
+    try {
+      const userBalance = await api.getBalance(userId);
+      setBalance(userBalance);
+    } catch (error) {
+      console.error('Ошибка загрузки данных:', error);
+    }
   };
 
-  const getCurrentTransactions = () => {
-    const user = users.find(u => u.username === currentUser);
-    return user?.transactions || [];
+  const loadTransactions = async () => {
+    try {
+      const data = await api.getTransactions(currentUserId);
+      setTransactions(data);
+    } catch (error) {
+      console.error('Ошибка загрузки транзакций:', error);
+    }
   };
 
-  const addTransaction = (type: Transaction['type'], amount: number, description: string) => {
-    const transaction: Transaction = {
-      id: Date.now().toString(),
-      type,
-      amount,
-      timestamp: Date.now(),
-      description
-    };
-    
-    setUsers(prev => prev.map(u => 
-      u.username === currentUser 
-        ? { ...u, transactions: [transaction, ...(u.transactions || [])] } 
-        : u
-    ));
+  const loadPvPBets = async () => {
+    try {
+      const bets = await api.getPvPBets();
+      setPvpBets(bets);
+    } catch (error) {
+      console.error('Ошибка загрузки ставок:', error);
+    }
   };
 
-  const updateBalance = (amount: number, type: Transaction['type'], description: string) => {
-    setUsers(prev => prev.map(u => 
-      u.username === currentUser ? { ...u, balance: u.balance + amount } : u
-    ));
-    addTransaction(type, amount, description);
-  };
-
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!username || !password || !confirmPassword) {
       toast.error('Заполните все поля');
       return;
@@ -116,40 +100,56 @@ const Index = () => {
       return;
     }
     
-    if (users.find(u => u.username === username)) {
-      toast.error('Юзернейм занят');
-      return;
+    try {
+      const user = await api.register(username, password);
+      setCurrentUserId(user.user_id);
+      setCurrentUsername(user.username);
+      setBalance(user.balance);
+      
+      localStorage.setItem('casino_user_id', user.user_id.toString());
+      localStorage.setItem('casino_username', user.username);
+      
+      setUsername('');
+      setPassword('');
+      setConfirmPassword('');
+      toast.success('Регистрация успешна!');
+      setScreen('player-menu');
+    } catch (error: any) {
+      toast.error(error.message || 'Ошибка регистрации');
     }
-    
-    const newUser: User = { 
-      username, 
-      password, 
-      balance: 0,
-      transactions: []
-    };
-    
-    setUsers([...users, newUser]);
-    setCurrentUser(username);
-    setUsername('');
-    setPassword('');
-    setConfirmPassword('');
-    toast.success('Регистрация успешна!');
-    setScreen('player-menu');
   };
 
-  const handleLogin = () => {
-    const user = users.find(u => u.username === username && u.password === password);
-    
-    if (!user) {
-      toast.error('Неверный логин или пароль');
+  const handleLogin = async () => {
+    if (!username || !password) {
+      toast.error('Заполните все поля');
       return;
     }
     
-    setCurrentUser(username);
-    setUsername('');
-    setPassword('');
-    toast.success(`Добро пожаловать, ${username}!`);
-    setScreen('player-menu');
+    try {
+      const user = await api.login(username, password);
+      setCurrentUserId(user.user_id);
+      setCurrentUsername(user.username);
+      setBalance(user.balance);
+      
+      localStorage.setItem('casino_user_id', user.user_id.toString());
+      localStorage.setItem('casino_username', user.username);
+      
+      setUsername('');
+      setPassword('');
+      toast.success(`Добро пожаловать, ${user.username}!`);
+      setScreen('player-menu');
+    } catch (error: any) {
+      toast.error(error.message || 'Ошибка входа');
+    }
+  };
+
+  const updateUserBalance = async (amount: number, type: string, description: string) => {
+    try {
+      const newBalance = await api.updateBalance(currentUserId, amount, type, description);
+      setBalance(newBalance);
+    } catch (error) {
+      console.error('Ошибка обновления баланса:', error);
+    }
   };
 
   const spinRoulette = () => {
@@ -158,7 +158,7 @@ const Index = () => {
       return;
     }
     
-    if (getCurrentBalance() < betAmount) {
+    if (balance < betAmount) {
       toast.error('Недостаточно голды');
       return;
     }
@@ -191,12 +191,12 @@ const Index = () => {
       setRouletteResult(result);
       
       if (result === 'loss') {
-        updateBalance(-betAmount, 'loss', `Рулетка: проигрыш`);
+        updateUserBalance(-betAmount, 'loss', `Рулетка: проигрыш`);
         toast.error(`Проигрыш! -${betAmount} голды`);
       } else if (result === 'x1') {
         toast.info('X1 - ваша ставка возвращена');
       } else if (result === 'x2') {
-        updateBalance(betAmount, 'win', `Рулетка: X2`);
+        updateUserBalance(betAmount, 'win', `Рулетка: X2`);
         toast.success(`X2! +${betAmount} голды`);
       }
     }, 4000);
@@ -217,36 +217,35 @@ const Index = () => {
     const multiplier = shuffled[chosenDoor - 1];
     const winAmount = betAmount * multiplier - betAmount;
     
-    updateBalance(winAmount, 'win', `Рулетка: X${multiplier}`);
+    updateUserBalance(winAmount, 'win', `Рулетка: X${multiplier}`);
     toast.success(`X${multiplier}! +${winAmount} голды`);
     setRouletteResult(null);
     setMysteryChoice(null);
   };
 
-  const createPvPBet = () => {
+  const createPvPBet = async () => {
     if (newBetAmount < 10) {
       toast.error('Минимальная ставка 10 голды');
       return;
     }
     
-    if (getCurrentBalance() < newBetAmount) {
+    if (balance < newBetAmount) {
       toast.error('Недостаточно голды');
       return;
     }
     
-    const newBet: PvPBet = {
-      id: Date.now().toString(),
-      creator: currentUser,
-      amount: newBetAmount
-    };
-    
-    setPvpBets([...pvpBets, newBet]);
-    toast.success('Ставка создана!');
-    setNewBetAmount(10);
+    try {
+      await api.createPvPBet(currentUserId, newBetAmount);
+      toast.success('Ставка создана!');
+      setNewBetAmount(10);
+      loadPvPBets();
+    } catch (error: any) {
+      toast.error(error.message || 'Ошибка создания ставки');
+    }
   };
 
-  const respondToBet = (bet: PvPBet) => {
-    if (bet.creator === currentUser) {
+  const respondToBet = async (bet: api.ApiPvPBet) => {
+    if (bet.creator_id === currentUserId) {
       toast.error('Нельзя ответить на свою ставку');
       return;
     }
@@ -256,68 +255,43 @@ const Index = () => {
       return;
     }
     
-    if (getCurrentBalance() < respondBetAmount) {
+    if (balance < respondBetAmount) {
       toast.error('Недостаточно голды');
       return;
     }
     
-    const totalPool = bet.amount + respondBetAmount;
-    const opponentChance = (respondBetAmount / totalPool) * 100;
-    const rand = Math.random() * 100;
-    const winner = rand < opponentChance ? currentUser : bet.creator;
-    
-    if (winner === currentUser) {
-      updateBalance(bet.amount, 'pvp_win', `PvP: победа над ${bet.creator}`);
-      toast.success(`Победа! +${bet.amount} голды`);
+    try {
+      const result = await api.respondToPvPBet(bet.id, currentUserId, respondBetAmount);
       
-      setUsers(prev => prev.map(u => 
-        u.username === bet.creator 
-          ? { 
-              ...u, 
-              balance: u.balance - bet.amount,
-              transactions: [{
-                id: Date.now().toString(),
-                type: 'pvp_loss',
-                amount: -bet.amount,
-                timestamp: Date.now(),
-                description: `PvP: проигрыш ${currentUser}`
-              }, ...(u.transactions || [])]
-            } 
-          : u
-      ));
-    } else {
-      updateBalance(-respondBetAmount, 'pvp_loss', `PvP: проигрыш ${bet.creator}`);
-      toast.error(`Проигрыш! -${respondBetAmount} голды`);
+      if (result.is_winner) {
+        toast.success(`Победа! +${bet.amount} голды`);
+      } else {
+        toast.error(`Проигрыш! -${respondBetAmount} голды`);
+      }
       
-      setUsers(prev => prev.map(u => 
-        u.username === bet.creator 
-          ? { 
-              ...u, 
-              balance: u.balance + respondBetAmount,
-              transactions: [{
-                id: Date.now().toString(),
-                type: 'pvp_win',
-                amount: respondBetAmount,
-                timestamp: Date.now(),
-                description: `PvP: победа над ${currentUser}`
-              }, ...(u.transactions || [])]
-            } 
-          : u
-      ));
+      loadUserData(currentUserId);
+      loadPvPBets();
+    } catch (error: any) {
+      toast.error(error.message || 'Ошибка ответа на ставку');
     }
-    
-    setPvpBets(pvpBets.filter(b => b.id !== bet.id));
   };
 
-  const handleAdminLogin = () => {
+  const handleAdminLogin = async () => {
     if (adminCode === 'DJJDIDHDHXIEU') {
+      setIsAdminLoggedIn(true);
       toast.success('Вход в админ-панель');
+      try {
+        const users = await api.getAdminUsers(adminCode);
+        setAdminUsers(users);
+      } catch (error: any) {
+        toast.error(error.message || 'Ошибка загрузки пользователей');
+      }
     } else {
       toast.error('Неверный код');
     }
   };
 
-  const executeAdminCommand = () => {
+  const executeAdminCommand = async () => {
     const match = adminCommand.match(/^\/п\s+(\S+)\s+([\+\-])(\d+)$/);
     
     if (!match) {
@@ -327,40 +301,23 @@ const Index = () => {
     
     const [, targetUser, operation, amountStr] = match;
     const amount = parseInt(amountStr);
-    
-    const user = users.find(u => u.username === targetUser);
-    if (!user) {
-      toast.error('Пользователь не найден');
-      return;
-    }
-    
     const delta = operation === '+' ? amount : -amount;
-    const transType = operation === '+' ? 'deposit' : 'withdrawal';
-    const transDesc = operation === '+' ? `Пополнение админом` : `Вывод средств`;
     
-    setUsers(prev => prev.map(u => 
-      u.username === targetUser 
-        ? { 
-            ...u, 
-            balance: Math.max(0, u.balance + delta),
-            transactions: [{
-              id: Date.now().toString(),
-              type: transType,
-              amount: delta,
-              timestamp: Date.now(),
-              description: transDesc
-            }, ...(u.transactions || [])]
-          } 
-        : u
-    ));
-    
-    toast.success(`${operation}${amount} голды для ${targetUser}`);
-    setAdminCommand('');
+    try {
+      await api.adminUpdateBalance(adminCode, targetUser, delta);
+      toast.success(`${operation}${amount} голды для ${targetUser}`);
+      setAdminCommand('');
+      
+      const users = await api.getAdminUsers(adminCode);
+      setAdminUsers(users);
+    } catch (error: any) {
+      toast.error(error.message || 'Ошибка выполнения команды');
+    }
   };
 
   const filteredUsers = adminSearch 
-    ? users.filter(u => u.username.toLowerCase().includes(adminSearch.toLowerCase()))
-    : users;
+    ? adminUsers.filter(u => u.username.toLowerCase().includes(adminSearch.toLowerCase()))
+    : adminUsers;
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -509,11 +466,11 @@ const Index = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold text-gold gold-glow">F12F13 CASINO</h2>
-                  <p className="text-sm text-gray-400">Игрок: {currentUser}</p>
+                  <p className="text-sm text-gray-400">Игрок: {currentUsername}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-400">Баланс</p>
-                  <p className="text-3xl font-bold text-gold">{getCurrentBalance()} 💰</p>
+                  <p className="text-3xl font-bold text-gold">{balance} 💰</p>
                 </div>
               </div>
             </Card>
@@ -576,7 +533,7 @@ const Index = () => {
                   <p className="text-sm text-gray-400 mb-4">Минимальная сумма вывода: 200 голды</p>
                   <Button
                     className="w-full bg-gold text-black hover:bg-amber font-semibold"
-                    disabled={getCurrentBalance() < 200}
+                    disabled={balance < 200}
                     onClick={() => window.open('https://t.me/Aks1kx_bot', '_blank')}
                   >
                     <Icon name="ArrowDownToLine" className="mr-2" />
@@ -638,7 +595,7 @@ const Index = () => {
                         <Button
                           className="w-full bg-gold text-black hover:bg-amber font-semibold py-6 text-xl"
                           onClick={spinRoulette}
-                          disabled={isSpinning || getCurrentBalance() < betAmount}
+                          disabled={isSpinning || balance < betAmount}
                         >
                           <Icon name="Play" className="mr-2" />
                           КРУТИТЬ ({betAmount} 💰)
@@ -700,7 +657,7 @@ const Index = () => {
                             <p className="text-white font-semibold">{bet.creator}</p>
                             <p className="text-gold text-lg font-bold">{bet.amount} 💰</p>
                           </div>
-                          {bet.creator !== currentUser && (
+                          {bet.creator_id !== currentUserId && (
                             <div className="flex gap-2 items-center">
                               <Input
                                 type="number"
@@ -717,7 +674,7 @@ const Index = () => {
                               </Button>
                             </div>
                           )}
-                          {bet.creator === currentUser && (
+                          {bet.creator_id === currentUserId && (
                             <span className="text-sm text-gray-400">Ваша ставка</span>
                           )}
                         </div>
@@ -732,10 +689,10 @@ const Index = () => {
                   <h3 className="text-2xl font-bold text-gold mb-4">📊 История транзакций</h3>
                   
                   <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {getCurrentTransactions().length === 0 ? (
+                    {transactions.length === 0 ? (
                       <p className="text-center text-gray-400 py-8">Нет транзакций</p>
                     ) : (
-                      getCurrentTransactions().map(transaction => (
+                      transactions.map(transaction => (
                         <Card key={transaction.id} className="bg-muted/30 border border-gold/20 p-3">
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
@@ -761,7 +718,11 @@ const Index = () => {
               className="w-full border-gold/30 text-gold hover:bg-gold/10"
               onClick={() => {
                 setScreen('role-select');
-                setCurrentUser('');
+                setCurrentUserId(0);
+                setCurrentUsername('');
+                setBalance(0);
+                localStorage.removeItem('casino_user_id');
+                localStorage.removeItem('casino_username');
               }}
             >
               Выйти
@@ -777,7 +738,7 @@ const Index = () => {
                 АДМИН-ПАНЕЛЬ
               </h2>
               
-              {adminCode !== 'DJJDIDHDHXIEU' && (
+              {!isAdminLoggedIn && (
                 <div className="max-w-md mx-auto space-y-4">
                   <Input
                     type="password"
@@ -802,7 +763,7 @@ const Index = () => {
                 </div>
               )}
               
-              {adminCode === 'DJJDIDHDHXIEU' && (
+              {isAdminLoggedIn && (
                 <Tabs defaultValue="users" className="space-y-4">
                   <TabsList className="grid w-full grid-cols-2 bg-muted">
                     <TabsTrigger value="users" className="data-[state=active]:bg-gold data-[state=active]:text-black">
@@ -828,7 +789,7 @@ const Index = () => {
                         <p className="text-center text-gray-400 py-8">Нет пользователей</p>
                       ) : (
                         filteredUsers.map(user => (
-                          <Card key={user.username} className="bg-muted/50 border-2 border-gold/30 p-4">
+                          <Card key={user.id} className="bg-muted/50 border-2 border-gold/30 p-4">
                             <div className="grid grid-cols-3 gap-4">
                               <div>
                                 <p className="text-xs text-gray-400">Юзернейм</p>
@@ -877,13 +838,15 @@ const Index = () => {
               )}
             </Card>
             
-            {adminCode === 'DJJDIDHDHXIEU' && (
+            {isAdminLoggedIn && (
               <Button
                 variant="outline"
                 className="w-full border-gold/30 text-gold hover:bg-gold/10"
                 onClick={() => {
                   setScreen('role-select');
                   setAdminCode('');
+                  setIsAdminLoggedIn(false);
+                  setAdminUsers([]);
                 }}
               >
                 Выйти
